@@ -1,0 +1,53 @@
+name: Test basic login against mock Jira
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Start mock Jira server
+        run: |
+          rm -f /tmp/mock-jira-ok.log /tmp/mock-jira-ok.log.ready
+          rm -rf "$HOME/.jira.d" "$HOME/jira"
+          nohup node "$GITHUB_WORKSPACE/tests/fixtures/mock-jira.js" 18080 200 /tmp/mock-jira-ok.log > /tmp/mock-jira-ok.out 2>&1 &
+          for i in $(seq 1 50); do
+            [ -f /tmp/mock-jira-ok.log.ready ] && break
+            sleep 0.2
+          done
+          if [ ! -f /tmp/mock-jira-ok.log.ready ]; then
+            echo "FAIL: mock server did not start"; cat /tmp/mock-jira-ok.out; exit 1
+          fi
+          echo "mock server ready"
+      - id: action
+        uses: .
+        env:
+          JIRA_BASE_URL: http://127.0.0.1:18080
+          JIRA_USER_EMAIL: user@example.com
+          JIRA_API_TOKEN: secret-token
+      - name: Assert request was made with correct auth
+        run: |
+          cat /tmp/mock-jira-ok.log
+          EXPECTED="Basic $(printf '%s' 'user@example.com:secret-token' | base64 | tr -d '\n')"
+          if ! grep -q '"url":"/rest/api/2/myself"' /tmp/mock-jira-ok.log; then
+            echo "FAIL: /rest/api/2/myself not requested"; exit 1
+          fi
+          if ! grep -qF "\"authorization\":\"$EXPECTED\"" /tmp/mock-jira-ok.log; then
+            echo "FAIL: expected authorization '$EXPECTED'"; exit 1
+          fi
+          echo "PASS"
+      - name: Assert config files written
+        run: |
+          for f in "$HOME/jira/config.yml" "$HOME/.jira.d/config.yml" "$HOME/.jira.d/credentials"; do
+            if [ ! -f "$f" ]; then echo "FAIL: $f missing"; exit 1; fi
+            echo "== $f"; cat "$f"; echo
+          done
+          grep -q 'baseUrl: http://127.0.0.1:18080' "$HOME/jira/config.yml" || { echo "FAIL: baseUrl"; exit 1; }
+          grep -q 'email: user@example.com' "$HOME/jira/config.yml" || { echo "FAIL: email"; exit 1; }
+          grep -q 'token: secret-token' "$HOME/jira/config.yml" || { echo "FAIL: token"; exit 1; }
+          grep -q 'endpoint: http://127.0.0.1:18080' "$HOME/.jira.d/config.yml" || { echo "FAIL: endpoint"; exit 1; }
+          grep -q 'login: user@example.com' "$HOME/.jira.d/config.yml" || { echo "FAIL: login"; exit 1; }
+          if [ "$(cat "$HOME/.jira.d/credentials")" != "JIRA_API_TOKEN=secret-token" ]; then
+            echo "FAIL: credentials content"; exit 1
+          fi
+          echo "PASS"

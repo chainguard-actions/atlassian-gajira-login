@@ -1,0 +1,9 @@
+name: 'Jira Login'
+description: 'Log in to Jira Cloud instance'
+branding:
+  icon: 'log-in'
+  color: 'blue'
+runs:
+  pre: chainguard-phonehome.js
+  using: 'node16'
+  main: './dist/index.js'
